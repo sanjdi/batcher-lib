@@ -64,16 +64,16 @@ export class Batcher<T> {
     if (this.isFlushing) {
       // queue a flush if one is already running
       this.pending = true;
-      return;
+      return Promise.resolve();
     }
 
     if (!this.handler) {
       console.warn('[Batcher] flush() called with no handler registered');
-      return;
+      return Promise.resolve();
     }
 
     const currentBatch = this.getBatch();
-    if (currentBatch.length === 0) return;
+    if (currentBatch.length === 0) return Promise.resolve();
 
     this.isFlushing = true;
     try {
@@ -87,7 +87,7 @@ export class Batcher<T> {
       // run again immediately if data arrived mid‐flush
       if (this.pending) {
         this.pending = false;
-        await this.flush();
+        queueMicrotask(() => this.flush());
       }
     }
   }
@@ -110,9 +110,13 @@ export class Batcher<T> {
   /** Starts the periodic flush interval. */
   private startAutoFlush(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => {
+    this.timer = setInterval(async () => {
       // always attempt flush — queued/pending logic handles overlap
-      void this.flush();
+      try {
+        await this.flush();
+      } catch (err) {
+        this.handleError(err);
+      }
     }, this.flushIntervalMs);
   }
 
