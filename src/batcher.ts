@@ -1,23 +1,29 @@
 /**
  * A lightweight, generic batching utility.
  * Collects items of any type, supports manual and automatic flushing,
- * and allows error handling through a user-provided callback.
+ * and allows both synchronous and asynchronous handlers with error handling.
  */
 
 export interface BatcherOptions {
-  intervalMs?: number; // Optional: Flush interval in miliseconds
-  onError?: (error: unknown) => void; // Optional: Callback invoked if the registered handler throws an error
+  /** Optional: Flush interval in milliseconds */
+  intervalMs?: number;
+  /** Optional: Callback invoked if the registered handler throws or rejects */
+  onError?: (error: unknown) => void;
 }
 
 export class Batcher<T> {
   private items: T[] = [];
-  private handler?: (batch: T[]) => void;
+  private handler?: (batch: T[]) => void | Promise<void>;
   private readonly onError?: (error: unknown) => void;
   private timer?: ReturnType<typeof setInterval>;
   private readonly flushIntervalMs: number;
 
+  /** concurrency control */
+  private isFlushing = false;
+  private pending = false;
+
   constructor(options: BatcherOptions = {}) {
-    this.flushIntervalMs = options.intervalMs ?? 500; // default 500ms
+    this.flushIntervalMs = options.intervalMs ?? 500;
     this.onError = options.onError;
   }
 
@@ -45,16 +51,22 @@ export class Batcher<T> {
    * Registers a handler to process batches when flushed.
    * Automatically starts the flush interval if not already running.
    */
-  registerHandler(handler: (batch: T[]) => void): void {
+  registerHandler(handler: (batch: T[]) => void | Promise<void>): void {
     this.handler = handler;
     this.startAutoFlush();
   }
 
   /**
-   * Flushes the current batch immediately by invoking the handler.
-   * Logs a warning if no handler has been registered.
+   * Flushes the current batch immediately.
+   * Awaits async handlers and guarantees order.
    */
-  flush(): void {
+  async flush(): Promise<void> {
+    if (this.isFlushing) {
+      // queue a flush if one is already running
+      this.pending = true;
+      return;
+    }
+
     if (!this.handler) {
       console.warn('[Batcher] flush() called with no handler registered');
       return;
@@ -63,14 +75,27 @@ export class Batcher<T> {
     const currentBatch = this.getBatch();
     if (currentBatch.length === 0) return;
 
-    this.invokeHandler(currentBatch);
-    this.clear();
+    this.isFlushing = true;
+    try {
+      await this.invokeHandler(currentBatch);
+      this.clear();
+    } catch (err) {
+      this.handleError(err);
+    } finally {
+      this.isFlushing = false;
+
+      // run again immediately if data arrived mid‐flush
+      if (this.pending) {
+        this.pending = false;
+        await this.flush();
+      }
+    }
   }
 
   /** Safely invokes the handler and reports any errors. */
-  private invokeHandler(batch: T[]): void {
+  private async invokeHandler(batch: T[]): Promise<void> {
     try {
-      this.handler?.(batch);
+      await this.handler?.(batch);
     } catch (error) {
       this.handleError(error);
     }
@@ -78,17 +103,17 @@ export class Batcher<T> {
 
   /** Centralized error handling logic for handler failures. */
   private handleError(error: unknown): void {
-    if (this.onError) {
-      this.onError(error);
-    } else {
-      console.error('[Batcher] handler threw an error:', error);
-    }
+    if (this.onError) this.onError(error);
+    else console.error('[Batcher] handler threw an error:', error);
   }
 
   /** Starts the periodic flush interval. */
   private startAutoFlush(): void {
-    if (this.timer) return; // prevent multiple intervals
-    this.timer = setInterval(() => this.flush(), this.flushIntervalMs);
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      // always attempt flush — queued/pending logic handles overlap
+      void this.flush();
+    }, this.flushIntervalMs);
   }
 
   /** Stops the periodic flush interval. */
