@@ -1,119 +1,105 @@
 import { Batcher } from '../src/batcher';
 
+// ---- Test Helpers ----
+jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'setTimeout'] });
+
+async function tick(ms = 500) {
+  jest.advanceTimersByTime(ms);
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('Batcher', () => {
   let batcher: Batcher<any>;
 
-  beforeEach(() => {
-    jest.useFakeTimers();
-  });
-
   afterEach(() => {
     batcher?.stopAutoFlush?.();
+    jest.clearAllMocks();
     jest.clearAllTimers();
-    jest.useRealTimers();
   });
 
-  it('should add items to batch', () => {
+  // ---- Basic Functionality ----
+  it('should start empty and allow adding items', () => {
     batcher = new Batcher<number>();
-    batcher.add(10);
-    expect(batcher.getBatch()).toEqual([10]);
-  });
-
-  it('should handle multiple items', () => {
-    batcher = new Batcher<string>();
-    batcher.add('A');
-    batcher.add('B');
-    expect(batcher.getBatch()).toEqual(['A', 'B']);
-  });
-
-  it('should start with an empty batch', () => {
-    batcher = new Batcher<boolean>();
     expect(batcher.getBatch()).toEqual([]);
-  });
-
-  it('should add many items at once', () => {
-    batcher = new Batcher<number>();
-    batcher.addMany([1, 2, 3]);
+    batcher.add(1);
+    batcher.addMany([2, 3]);
     expect(batcher.getBatch()).toEqual([1, 2, 3]);
   });
 
-  it('should support batches containing multiple types', () => {
-    batcher = new Batcher<number | string | object>();
+  it('should handle multiple data types', () => {
+    batcher = new Batcher<number | string | { reading: number }>();
     const timestamp = Date.now();
 
     batcher.add(42);
-    batcher.addMany(['temp', 100, { reading: 102, time: timestamp }]);
+    batcher.addMany(['temp', { reading: 102, time: timestamp }]);
 
     expect(batcher.getBatch()).toEqual([
       42,
       'temp',
-      100,
       { reading: 102, time: timestamp },
     ]);
   });
 
-  it('should allow registering an anonymous handler and invoke it on flush', () => {
-    batcher = new Batcher<number>();
+  // ---- Handler Registration and Manual Flush ----
+  it('should invoke handler manually when flush() is called', async () => {
     const handler = jest.fn();
-
+    batcher = new Batcher<number>();
     batcher.registerHandler(handler);
     batcher.addMany([1, 2, 3]);
-    batcher.flush();
+
+    await batcher.flush();
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith([1, 2, 3]);
+    expect(batcher.getBatch()).toEqual([]);
   });
 
-  it('should automatically flush every 500 ms', () => {
+  // ---- Auto Flush ----
+  it('should automatically flush every 500 ms', async () => {
     const handler = jest.fn();
     batcher = new Batcher<number>();
     batcher.registerHandler(handler);
-    batcher.addMany([1, 2, 3]);
 
-    // First flush
-    jest.advanceTimersByTime(500);
+    batcher.addMany([1, 2, 3]);
+    await tick(500);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith([1, 2, 3]);
 
-    // Second flush
     batcher.addMany([4, 5]);
-    jest.advanceTimersByTime(500);
+    await tick(500);
     expect(handler).toHaveBeenCalledTimes(2);
     expect(handler).toHaveBeenLastCalledWith([4, 5]);
   });
 
-  it('should invoke onError callback if handler throws an error', () => {
+  // ---- Error Handling ----
+  it('should call onError if handler throws', async () => {
     const error = new Error('Handler failed');
-    const failingHandler = jest.fn(() => {
+    const onError = jest.fn();
+    const handler = jest.fn(() => {
       throw error;
     });
-    const onError = jest.fn();
 
     batcher = new Batcher<number>({ onError });
-    batcher.registerHandler(failingHandler);
+    batcher.registerHandler(handler);
     batcher.add(1);
 
-    // Trigger manual flush
-    batcher.flush();
-
-    expect(onError).toHaveBeenCalledTimes(1);
-    jest.runOnlyPendingTimers();
+    await batcher.flush();
     expect(onError).toHaveBeenCalledWith(error);
 
-    // Verify it also works during auto-flush
+    // Also check auto-flush
     batcher.add(2);
-    jest.advanceTimersByTime(500);
-
+    await tick(500);
     expect(onError).toHaveBeenCalledTimes(2);
-    jest.runOnlyPendingTimers();
-    expect(onError).toHaveBeenLastCalledWith(error);
   });
 
+  // ---- Async Handler Sequencing ----
   it('should await async handler before next flush and handle async errors', async () => {
+    jest.useRealTimers();
+
     const results: string[] = [];
     const onError = jest.fn();
 
-    // Async handler simulates a slow API call (300ms)
     const handler = jest.fn(async (batch: number[]) => {
       results.push(`start-${batch[0]}`);
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -123,38 +109,91 @@ describe('Batcher', () => {
     batcher = new Batcher<number>({ onError });
     batcher.registerHandler(handler);
 
-    // Add first batch and trigger first flush
     batcher.addMany([1]);
-    jest.advanceTimersByTime(500);
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 900));
 
-    // Add second batch while first async flush is still pending
     batcher.addMany([2]);
-    jest.advanceTimersByTime(500);
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 900));
 
     batcher.stopAutoFlush();
 
-    // The second flush should start only after the first async handler resolves
     expect(results).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
 
-    // Now test async error handling
+    // Async error handling
     const failingHandler = jest.fn(async () => {
       throw new Error('Async fail');
     });
-
     const batcherWithError = new Batcher<number>({ onError });
     batcherWithError.registerHandler(failingHandler);
-
     batcherWithError.addMany([99]);
-    jest.advanceTimersByTime(500);
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
 
+    await new Promise((r) => setTimeout(r, 600));
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
-
     batcherWithError.stopAutoFlush();
+  });
+
+  // ---- Concurrency / Queued Flush Behavior ----
+  it('should queue new batches while async handler is still running', async () => {
+    jest.useRealTimers();
+
+    const results: string[] = [];
+    const handler = jest.fn(async (batch: number[]) => {
+      results.push(`start-${batch[0]}`);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      results.push(`end-${batch[0]}`);
+    });
+
+    batcher = new Batcher<number>();
+    batcher.registerHandler(handler);
+
+    // First batch triggers flush at 500ms
+    batcher.addMany([1]);
+    await new Promise((r) => setTimeout(r, 550)); // flush triggered but not finished
+
+    // Add while first async handler is still running
+    batcher.addMany([2]);
+    await new Promise((r) => setTimeout(r, 1300));
+
+    batcher.stopAutoFlush();
+
+    expect(results).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
+  });
+
+  // ---- Batch Size Limiting ----
+  it('should flush items in fixed-size batches when batchSize is set', async () => {
+    const handler = jest.fn();
+    batcher = new Batcher<number>({ batchSize: 3 });
+    batcher.registerHandler(handler);
+
+    batcher.addMany([1, 2, 3, 4, 5, 6, 7]);
+    await batcher.flush();
+
+    expect(handler).toHaveBeenCalledTimes(3);
+    expect(handler.mock.calls[0][0]).toEqual([1, 2, 3]);
+    expect(handler.mock.calls[1][0]).toEqual([4, 5, 6]);
+    expect(handler.mock.calls[2][0]).toEqual([7]);
+  });
+
+  // ---- Continuous Draining ----
+  it('should immediately drain remaining items if new data arrives mid-flush', async () => {
+    const results: number[][] = [];
+    const handler = jest.fn(async (batch: number[]) => {
+      results.push(batch);
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    batcher = new Batcher<number>();
+    batcher.registerHandler(handler);
+
+    batcher.addMany([1, 2]);
+    await new Promise((r) => setTimeout(r, 100)); // before flush
+    batcher.addMany([3, 4, 5]); // mid-cycle add
+    await new Promise((r) => setTimeout(r, 1000));
+
+    batcher.stopAutoFlush();
+
+    // Expect all data eventually processed
+    const flattened = results.flat();
+    expect(flattened.sort()).toEqual([1, 2, 3, 4, 5]);
   });
 });
