@@ -1,7 +1,7 @@
 /**
  * A lightweight, generic batching utility.
  * Collects items of any type, supports manual and automatic flushing,
- * and allows both synchronous and asynchronous handlers with error handling.
+ * and allows both synchronous and asynchronous handlers with robust concurrency control.
  */
 
 export interface BatcherOptions {
@@ -9,47 +9,69 @@ export interface BatcherOptions {
   intervalMs?: number;
   /** Optional: Callback invoked if the registered handler throws or rejects */
   onError?: (error: unknown) => void;
+  /** Optional: Max number of items per flush (for streaming/batch mode) */
+  batchSize?: number;
 }
 
 export class Batcher<T> {
-  private items: T[] = [];
-  private handler?: (batch: T[]) => void | Promise<void>;
-  private readonly onError?: (error: unknown) => void;
-  private timer?: ReturnType<typeof setInterval>;
-  private readonly flushIntervalMs: number;
+  /** Internal queue of pending items (FIFO order). */
+  private queue: T[] = [];
 
-  /** concurrency control */
-  private isFlushing = false;
-  private pending = false;
+  /** The handler registered by user for each flush. */
+  private handler?: (batch: T[]) => void | Promise<void>;
+
+  /** Optional error callback. */
+  private readonly onError?: (error: unknown) => void;
+
+  /** Interval handle for automatic flush. */
+  private timer?: ReturnType<typeof setInterval>;
+
+  /** Flush configuration values. */
+  private readonly flushIntervalMs: number;
+  private readonly batchSize?: number;
+
+  /** Concurrency control flags. */
+  private flushing = false;
+  private flushQueued = false;
 
   constructor(options: BatcherOptions = {}) {
     this.flushIntervalMs = options.intervalMs ?? 500;
+    this.batchSize = options.batchSize;
     this.onError = options.onError;
   }
 
-  /** Adds a single item to the batch. */
+  /** Adds a single item to the queue. */
   add(item: T): void {
-    this.items.push(item);
+    this.queue.push(item);
   }
 
-  /** Adds multiple items to the batch at once. */
+  /** Adds multiple items to the queue at once. */
   addMany(items: T[]): void {
-    this.items.push(...items);
+    this.queue.push(...items);
   }
 
-  /** Returns a shallow copy of the current batch contents. */
+  /** Returns a shallow copy of the queue contents (for introspection). */
   getBatch(): T[] {
-    return [...this.items];
+    return [...this.queue];
   }
 
-  /** Clears all items from the batch. */
+  /** Clears all items from the queue. */
   clear(): void {
-    this.items = [];
+    this.queue = [];
+  }
+
+  /** Removes a single batch from the queue (up to batchSize, or entire queue). */
+  private dequeueBatch(): T[] {
+    if (!this.batchSize) {
+      const batch = this.queue.splice(0, this.queue.length);
+      return batch;
+    }
+    return this.queue.splice(0, this.batchSize);
   }
 
   /**
-   * Registers a handler to process batches when flushed.
-   * Automatically starts the flush interval if not already running.
+   * Registers a handler to process queued batches when flushed.
+   * Automatically starts the interval if not already running.
    */
   registerHandler(handler: (batch: T[]) => void | Promise<void>): void {
     this.handler = handler;
@@ -57,42 +79,45 @@ export class Batcher<T> {
   }
 
   /**
-   * Flushes the current batch immediately.
-   * Awaits async handlers and guarantees order.
+   * Main flush method — async-safe and queue-aware.
+   * Ensures no overlapping flushes occur, and drains all queued data sequentially.
    */
   async flush(): Promise<void> {
-    if (this.isFlushing) {
-      // queue a flush if one is already running
-      this.pending = true;
-      return Promise.resolve();
-    }
-
     if (!this.handler) {
       console.warn('[Batcher] flush() called with no handler registered');
-      return Promise.resolve();
+      return;
     }
 
-    const currentBatch = this.getBatch();
-    if (currentBatch.length === 0) return Promise.resolve();
+    // Avoid concurrent flush overlap
+    if (this.flushing) {
+      this.flushQueued = true;
+      return;
+    }
 
-    this.isFlushing = true;
+    // Nothing to process
+    if (this.queue.length === 0) return;
+
+    this.flushing = true;
     try {
-      await this.invokeHandler(currentBatch);
-      this.clear();
-    } catch (err) {
-      this.handleError(err);
+      // Drain queue completely in sequential chunks
+      while (this.queue.length > 0) {
+        const batch = this.dequeueBatch();
+        await this.invokeHandler(batch);
+      }
+    } catch (error) {
+      this.handleError(error);
     } finally {
-      this.isFlushing = false;
+      this.flushing = false;
 
-      // run again immediately if data arrived mid‐flush
-      if (this.pending) {
-        this.pending = false;
+      // If new items arrived mid-flush, queue another flush immediately
+      if (this.flushQueued || this.queue.length > 0) {
+        this.flushQueued = false;
         queueMicrotask(() => this.flush());
       }
     }
   }
 
-  /** Safely invokes the handler and reports any errors. */
+  /** Safely invokes the handler and reports errors. */
   private async invokeHandler(batch: T[]): Promise<void> {
     try {
       await this.handler?.(batch);
@@ -101,17 +126,16 @@ export class Batcher<T> {
     }
   }
 
-  /** Centralized error handling logic for handler failures. */
+  /** Centralized error handling logic. */
   private handleError(error: unknown): void {
     if (this.onError) this.onError(error);
     else console.error('[Batcher] handler threw an error:', error);
   }
 
-  /** Starts the periodic flush interval. */
+  /** Starts periodic flushing based on configured interval. */
   private startAutoFlush(): void {
     if (this.timer) return;
     this.timer = setInterval(async () => {
-      // always attempt flush — queued/pending logic handles overlap
       try {
         await this.flush();
       } catch (err) {
@@ -120,10 +144,11 @@ export class Batcher<T> {
     }, this.flushIntervalMs);
   }
 
-  /** Stops the periodic flush interval. */
+  /** Stops automatic flushing. */
   stopAutoFlush(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
-    this.timer = undefined;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
   }
 }
