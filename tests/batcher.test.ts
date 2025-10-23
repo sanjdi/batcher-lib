@@ -39,4 +39,19 @@ describe('Batcher', () => {
       { reading: 102, time: timestamp },
     ]);
   });
+
+  it('should allow registering an anonymous handler and invoke it on flush', () => {
+    const batcher = new Batcher<number>();
+    const handler = jest.fn();
+
+    // Register the handler
+    batcher.registerHandler(handler);
+
+    // Add items and manually trigger flush
+    batcher.addMany([1, 2, 3]);
+    batcher.flush();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith([1, 2, 3]);
+  });
 });
