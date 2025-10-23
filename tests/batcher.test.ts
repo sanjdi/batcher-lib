@@ -81,4 +81,31 @@ describe('Batcher', () => {
     expect(handler).toHaveBeenCalledTimes(2);
     expect(handler).toHaveBeenLastCalledWith([4, 5]);
   });
+
+  it('should invoke onError callback if handler throws an error', () => {
+    const error = new Error('Handler failed');
+    const failingHandler = jest.fn(() => {
+      throw error;
+    });
+    const onError = jest.fn();
+
+    batcher = new Batcher<number>({ onError });
+    batcher.registerHandler(failingHandler);
+    batcher.add(1);
+
+    // Trigger manual flush
+    batcher.flush();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    jest.runOnlyPendingTimers();
+    expect(onError).toHaveBeenCalledWith(error);
+
+    // Verify it also works during auto-flush
+    batcher.add(2);
+    jest.advanceTimersByTime(500);
+
+    expect(onError).toHaveBeenCalledTimes(2);
+    jest.runOnlyPendingTimers();
+    expect(onError).toHaveBeenLastCalledWith(error);
+  });
 });
