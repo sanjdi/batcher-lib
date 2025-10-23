@@ -3,11 +3,21 @@
  * Collects items of any type, supports manual and automatic flushing,
  * and invokes a registered handler on each flush.
  */
+
+interface BatcherOptions {
+  onError?: (error: unknown) => void;
+}
+
 export class Batcher<T> {
   private items: T[] = [];
   private handler?: (batch: T[]) => void;
+  private readonly onError?: (error: unknown) => void;
   private timer?: ReturnType<typeof setInterval>;
   private readonly flushIntervalMs: number = 500; // default 500ms
+
+  constructor(options: BatcherOptions = {}) {
+    this.onError = options.onError;
+  }
 
   /** Adds a single item to the batch */
   add(item: T): void {
@@ -54,7 +64,11 @@ export class Batcher<T> {
     try {
       this.handler?.(batch);
     } catch (error) {
-      console.error('[Batcher] handler threw an error:', error);
+      if (this.onError) {
+        this.onError(error);
+      } else {
+        console.error('[Batcher] handler threw an error:', error);
+      }
     }
   }
 
