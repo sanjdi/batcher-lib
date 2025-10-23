@@ -215,4 +215,37 @@ Manually flushed: ['a', 'b', 'c']
 | **Lightweight** | Minimal CPU & memory footprint |
 | **Framework-agnostic** | Works anywhere JavaScript runs |
 
+---
+
+## Use of Generative AI Tools
+
+This project was developed using a **Test-Driven Development (TDD)** approach with the assistance of OpenAI’s **ChatGPT (GPT-5)** to improve code structure, testing clarity, and documentation quality.
+
+### Purpose of AI Assistance
+AI assistance was used to:
+- Generate initial scaffolding for the `Batcher` class.
+- Refine TypeScript typings and ensure async safety in flush sequencing.
+- Suggest structured commit breakdowns to align with incremental TDD workflow.
+- Generate and refactor Jest test cases for synchronous and asynchronous handlers.
+- Produce README documentation and example usage content.
+
+### Prompts Used
+Below are representative prompts used during development:
+
+1. *"Develop a lightweight batcher utility class in TypeScript that supports async handlers and auto-flushing every 500ms."*  
+2. *"Use TDD to build the batcher step by step — show RED, GREEN, and REFACTOR stages."*  
+3. *"Refactor to safely handle async handlers with queued flushes and error handling."*  
+4. *"Improve Jest tests to handle fake timers and microtask queues properly."*  
+5. *"Create a README section explaining design choices, assumptions, and intended use for IoT batching."*  
+6. *"Generate sample usage examples showing synchronous, async, and error-handling scenarios."*  
+7. *"Write commit messages summarizing feature and test progress."*
+
+### Human Oversight
+All AI-generated code, documentation, and tests were **reviewed, modified, and verified** by the developer.  
+The AI was used as an accelerator and reviewer — not as an autonomous author.  
+Logic correctness, concurrency behavior, and test validation were manually inspected.
+
+---
+
+
 
