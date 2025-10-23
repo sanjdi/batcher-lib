@@ -21,15 +21,24 @@ export class Batcher<T> {
     return [...this.items];
   }
 
-  /** Registers a handler function that will be called when batch is flushed */
+  /** Registers a handler function to process the batch on flush */
   registerHandler(handler: (batch: T[]) => void): void {
     this.handler = handler;
   }
 
-  /** Invokes the registered handler with the current batch */
+  /** Manually triggers the handler with the current batch */
   flush(): void {
-    if (this.handler) {
-      this.handler([...this.items]);
+    if (!this.handler) {
+      console.warn('[Batcher] flush() called with no handler registered');
+      return;
     }
+
+    const currentBatch = this.getBatch();
+    this.invokeHandler(currentBatch);
+  }
+
+  /** Encapsulated handler invocation to centralize error handling */
+  private invokeHandler(batch: T[]): void {
+    this.handler?.(batch);
   }
 }
