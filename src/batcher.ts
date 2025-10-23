@@ -1,11 +1,12 @@
 /**
  * A lightweight, generic batching utility.
- * Collects items of any type and provides access to the current batch.
+ * Collects items of any type, supports manual and automatic flushing,
+ * and invokes a registered handler on each flush.
  */
 export class Batcher<T> {
   private items: T[] = [];
   private handler?: (batch: T[]) => void;
-  private timer?: NodeJS.Timeout;
+  private timer?: ReturnType<typeof setInterval>;
   private readonly flushIntervalMs: number = 500; // default 500ms
 
   /** Adds a single item to the batch */
@@ -13,21 +14,24 @@ export class Batcher<T> {
     this.items.push(item);
   }
 
-  /** Add multiple items at once to the batch */
+  /** Adds multiple items to the batch */
   addMany(items: T[]): void {
     this.items.push(...items);
   }
 
-  /** Returns all items currently in the batch */
+  /** Returns a shallow copy of the current batch */
   getBatch(): T[] {
     return [...this.items];
+  }
+
+  /** Clears all items from the batch */
+  clear(): void {
+    this.items = [];
   }
 
   /** Registers a handler function to process the batch on flush */
   registerHandler(handler: (batch: T[]) => void): void {
     this.handler = handler;
-
-    // Start auto-flush timer when handler is registered
     this.startAutoFlush();
   }
 
@@ -39,32 +43,31 @@ export class Batcher<T> {
     }
 
     const currentBatch = this.getBatch();
+    if (currentBatch.length === 0) return;
+
     this.invokeHandler(currentBatch);
     this.clear();
   }
 
-  /** Encapsulated handler invocation to centralize error handling */
+  /** Internal helper for safe handler invocation */
   private invokeHandler(batch: T[]): void {
-    this.handler?.(batch);
+    try {
+      this.handler?.(batch);
+    } catch (error) {
+      console.error('[Batcher] handler threw an error:', error);
+    }
   }
 
   /** Starts the interval to automatically flush batches */
   private startAutoFlush(): void {
     if (this.timer) return; // already started
-
     this.timer = setInterval(() => this.flush(), this.flushIntervalMs);
   }
 
   /** Stops the automatic flush timer */
   stopAutoFlush(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-  }
-
-  /** Clears all items from the batch */
-  clear(): void {
-    this.items = [];
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = undefined;
   }
 }
