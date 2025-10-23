@@ -108,4 +108,53 @@ describe('Batcher', () => {
     jest.runOnlyPendingTimers();
     expect(onError).toHaveBeenLastCalledWith(error);
   });
+
+  it('should await async handler before next flush and handle async errors', async () => {
+    const results: string[] = [];
+    const onError = jest.fn();
+
+    // Async handler simulates a slow API call (300ms)
+    const handler = jest.fn(async (batch: number[]) => {
+      results.push(`start-${batch[0]}`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      results.push(`end-${batch[0]}`);
+    });
+
+    batcher = new Batcher<number>({ onError });
+    batcher.registerHandler(handler);
+
+    // Add first batch and trigger first flush
+    batcher.addMany([1]);
+    jest.advanceTimersByTime(500);
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+
+    // Add second batch while first async flush is still pending
+    batcher.addMany([2]);
+    jest.advanceTimersByTime(500);
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+
+    batcher.stopAutoFlush();
+
+    // The second flush should start only after the first async handler resolves
+    expect(results).toEqual(['start-1', 'end-1', 'start-2', 'end-2']);
+
+    // Now test async error handling
+    const failingHandler = jest.fn(async () => {
+      throw new Error('Async fail');
+    });
+
+    const batcherWithError = new Batcher<number>({ onError });
+    batcherWithError.registerHandler(failingHandler);
+
+    batcherWithError.addMany([99]);
+    jest.advanceTimersByTime(500);
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+
+    batcherWithError.stopAutoFlush();
+  });
 });
