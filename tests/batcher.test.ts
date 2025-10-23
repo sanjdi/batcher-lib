@@ -18,4 +18,25 @@ describe('Batcher', () => {
     const batcher = new Batcher<boolean>();
     expect(batcher.getBatch()).toEqual([]);
   });
+
+  it('should add many items at once', () => {
+    const batcher = new Batcher<number>();
+    batcher.addMany([1, 2, 3]);
+    expect(batcher.getBatch()).toEqual([1, 2, 3]);
+  });
+
+  it('should support batches containing multiple types', () => {
+    const batcher = new Batcher<number | string | object>();
+    const timestamp = Date.now();
+
+    batcher.add(42);
+    batcher.addMany(['temp', 100, { reading: 102, time: timestamp }]);
+
+    expect(batcher.getBatch()).toEqual([
+      42,
+      'temp',
+      100,
+      { reading: 102, time: timestamp },
+    ]);
+  });
 });
