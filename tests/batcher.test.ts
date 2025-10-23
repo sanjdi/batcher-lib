@@ -55,3 +55,39 @@ describe('Batcher', () => {
     expect(handler).toHaveBeenCalledWith([1, 2, 3]);
   });
 });
+
+describe('Batcher Auto-Flush', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('should automatically flush every 500ms', () => {
+    const handler = jest.fn();
+
+    // Create batcher
+    const batcher = new Batcher<number>();
+    batcher.registerHandler(handler);
+
+    batcher.addMany([1, 2, 3]);
+
+    // Fast-forward time by 500ms
+    jest.advanceTimersByTime(500);
+
+    // Expect handler to have been called with the batch
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith([1, 2, 3]);
+
+    // Add more items
+    batcher.addMany([4, 5]);
+
+    // Fast-forward another 500ms
+    jest.advanceTimersByTime(500);
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenLastCalledWith([4, 5]);
+  });
+});
