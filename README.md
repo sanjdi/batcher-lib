@@ -4,14 +4,14 @@
 
 The **Batcher** utility is a lightweight, framework-agnostic batching engine for scenarios such as data ingestion, IoT telemetry, or event-driven systems. It efficiently collects items, batches them for processing, and supports both synchronous and asynchronous handlers with strict sequencing guarantees.
 
-#### Requirements
-The Batcher utility should be able to;
-1. Add one or more generic _types_ to a batch.
-2. Register an anonymous handler function with the batching library.
-3. Automatically send the batch to the handler function at a given interval (default: every 500ms).
-4. Manually send the batch to the handler, when needed.
-5. Provide a way for the user to respond to errors.
-6. Unit test.
+#### Features
+This utility provides the use with following features and fucntionalities;
+1. Can add one or more generic _types_ to a batch.
+2. Can register an anonymous handler function (synchronous or asynchronous) with the batching library.
+3. Can automatically send the batch to the handler function at a given interval (default: every 500ms).
+4. Can send the batch to the handler manually, if needed.
+5. Can use an externally-provided (optional) error handler to respond to errors.
+6. Unit tests.
 ---
 
 ### Problem Context
@@ -332,6 +332,7 @@ Manually flushed: ['a', 'b', 'c']
 
 ✅ Result:
 100 temperature readings now send in **one batched request** every 500 ms — reducing total time from **5 seconds** to **~50 milliseconds**, with clean error handling and deterministic order.
+
 
 
 
