@@ -8,9 +8,10 @@ The **Batcher** utility is a lightweight, framework-agnostic batching engine for
 The Batcher utility should be able to;
 1. Add one or more generic _types_ to a batch.
 2. Register an anonymous handler function with the batching library.
-3. Send the batch to the handler function every 500ms.
-4. Give the user to respond to errors.
-5. Unit test.
+3. Automatically send the batch to the handler function at a given interval (default: every 500ms).
+4. Manually send the batch to the handler, when needed.
+5. Provide a way for the user to respond to errors.
+6. Unit test.
 ---
 
 ### Problem Context
@@ -331,5 +332,6 @@ Manually flushed: ['a', 'b', 'c']
 
 ✅ Result:
 100 temperature readings now send in **one batched request** every 500 ms — reducing total time from **5 seconds** to **~50 milliseconds**, with clean error handling and deterministic order.
+
 
 
